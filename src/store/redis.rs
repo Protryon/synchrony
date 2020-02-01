@@ -50,7 +50,7 @@ impl Store for RedisStore {
         if connection.is_err() {
             return Err(format!("{:?}", connection.err().unwrap()));
         }
-        let new_node = Node { uuid: Uuid::new_v4(), last_ping: epoch(), node_type_uuid: None };
+        let new_node = Node { uuid: Uuid::new_v4(), last_ping: epoch(), node_type_uuid: None, node_type: None };
         let redis_result: Result<(), ::redis::RedisError> = connection.as_mut().unwrap().hset("nodes", new_node.uuid.hyphenated().to_string(), serde_json::to_string(&new_node).unwrap());
         if redis_result.is_err() {
             return Err(format!("{:?}", redis_result.err().unwrap()));
@@ -245,6 +245,31 @@ impl Store for RedisStore {
         return Ok(());
     }
 
+    fn get_all_jobs_in_progress(&mut self) -> Result<Vec<Job>, String> {
+        let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
+        return self.get_all_jobs_in(format!("jobs_in_progress_{}", node_type_uuid));
+    }
+
+    fn get_all_jobs_finished(&mut self) -> Result<Vec<Job>, String> {
+        let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
+        return self.get_all_jobs_in(format!("jobs_finished_{}", node_type_uuid));
+    }
+
+    fn get_finished_job(&mut self, uuid: Uuid) -> Result<Job, String> {
+        let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
+        let redis_result: Result<String, ::redis::RedisError> = self.connection.hget(format!("jobs_finished_{}", node_type_uuid), uuid.hyphenated().to_string());
+        if redis_result.is_err() {
+            return Err(format!("{:?}", redis_result.err().unwrap()));
+        }
+        let raw_job: Result<Job, serde_json::Error> = serde_json::from_str(&*redis_result.unwrap());
+        if raw_job.is_err() {
+            return Err(format!("{:?}", raw_job.err().unwrap()));
+        }
+        let mut job = raw_job.unwrap();
+        job.job_type = Some(self.get_cached_job_type(job.job_type_uuid)?);
+        return Ok(job);
+    }
+
     fn ping(&mut self) -> Result<(), String> {
         self.node.last_ping = epoch();
         let redis_result: Result<(), ::redis::RedisError> = self.connection.hset("nodes", self.node.uuid.hyphenated().to_string(), serde_json::to_string(&self.node).unwrap());
@@ -277,9 +302,40 @@ impl Store for RedisStore {
         }));
     }
     
+    fn clean(&mut self) {
+        let _: Result<(), ::redis::RedisError> = ::redis::cmd("FLUSHDB").query(&mut self.connection);
+    }
 }
 
 impl RedisStore {
+
+    fn get_all_jobs_in(&mut self, key: String) -> Result<Vec<Job>, String> {
+        let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
+        let redis_result: Result<Vec<String>, ::redis::RedisError> = self.connection.hgetall(key);
+        if redis_result.is_err() {
+            return Err(format!("{:?}", redis_result.err().unwrap()));
+        }
+        let raw_redis = redis_result.unwrap();
+        let mut output: Vec<Job> = vec![];
+        let mut current_uuid: &String = &"".to_string();
+        for i in 0..raw_redis.len() {
+            if i % 2 == 0 {
+                current_uuid = &raw_redis[i];
+            } else {
+                let raw_job: Result<Job, serde_json::Error> = serde_json::from_str(&*raw_redis[i]);
+                if raw_job.is_err() {
+                    return Err(format!("{:?}", raw_job.err().unwrap()));
+                }
+                let mut job = raw_job.unwrap();
+                if job.uuid.hyphenated().to_string() != *current_uuid {
+                    return Err(format!("redis consistency error: hash key '{}' not equal data given uuid '{}'", job.uuid.hyphenated(), *current_uuid));
+                }
+                job.job_type = Some(self.get_cached_job_type(job.job_type_uuid)?);
+                output.push(job);
+            }
+        }
+        return Ok(output);
+    }
 
     fn get_cached_job_type(&mut self, uuid: Uuid) -> Result<JobType, String> {
         let cached = self.job_types.get(&uuid);
@@ -298,12 +354,7 @@ impl RedisStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn clean(store: &mut RedisStore) {
-        let _: Result<(), ::redis::RedisError> = store.connection.del("node_types".to_string());
-        let _: Result<(), ::redis::RedisError> = store.connection.del("job_types".to_string());
-        let _: Result<(), ::redis::RedisError> = store.connection.del("schedule_items".to_string());
-    }
+    use crate::store::tests::*;
 
     #[test]
     fn can_connect() -> Result<(), String> {
@@ -312,66 +363,10 @@ mod tests {
         Ok(())
     }
 
-    fn make_node_type(store: &mut RedisStore) -> Result<NodeType, String> {
-        let test_node_type = NodeType {
-            name: "test_node_type".to_string(),
-            uuid: Uuid::new_v4(),
-            thread_count: 1,
-        };
-        store.new_node_type(&test_node_type)?;
-        return Ok(test_node_type);
-    }
-
-    fn make_job_type(store: &mut RedisStore) -> Result<JobType, String> {
-        let mut test_job_type = JobType {
-            executor: "bash".to_string(),
-            name: "test".to_string(),
-            node_type: "default".to_string(),
-            timeout: None,
-            unique: false,
-            uuid: Uuid::new_v4(),
-            metadata: HashMap::new(),
-        };
-        test_job_type.metadata.insert("command".to_string(), Value::String("echo 'test'".to_string()));
-        store.new_job_type(&test_job_type)?;
-        return Ok(test_job_type);
-    }
-
-    fn make_job(store: &mut RedisStore, job_type: &JobType) -> Result<Job, String> {
-        let job = Job {
-            uuid: Uuid::new_v4(),
-            job_type_uuid: job_type.uuid,
-            job_type: Some(job_type.clone()),
-            arguments: HashMap::new(),
-            executing_node: None,
-            enqueued_at: None,
-            started_at: None,
-            ended_at: None,
-            results: None,
-            errors: None,
-        };
-        store.enqueue_job(job.clone())?;
-        return Ok(job);
-    }
-
-    fn make_schedule_item(store: &mut RedisStore, job_type_uuid: Uuid) -> Result<ScheduleItem, String> {
-        let mut test_schedule_item = ScheduleItem {
-            uuid: Uuid::new_v4(),
-            interval: 30000,
-            last_scheduled_by: None,
-            last_scheduled_at: None,
-            job_type_uuid: job_type_uuid,
-            job_arguments: HashMap::new(),
-        };
-        test_schedule_item.job_arguments.insert("command".to_string(), Value::String("echo 'test'".to_string()));
-        store.new_job_schedule_item(&test_schedule_item)?;
-        return Ok(test_schedule_item);
-    }
-
     #[test]
     fn can_get_node_types() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let node_types = store.get_node_types()?;
         assert_eq!(node_types, vec![]);
         let test_node_type = make_node_type(&mut store)?;
@@ -383,18 +378,19 @@ mod tests {
     #[test]
     fn can_set_node_type() -> Result<(), String> {
         let mut store = RedisStore::connect()?;
-        clean(&mut store);
-        let test_node_type = make_node_type(&mut store)?;
-        store.set_node_type(test_node_type.uuid)?;
-        let redis_result: Result<String, ::redis::RedisError> = store.connection.hget("nodes", store.node.uuid.hyphenated().to_string());
-        assert_eq!(redis_result.unwrap(), serde_json::to_string(&store.node).unwrap());
+        let mut boxed_store: StoreRef = store.replicate()?;
+        boxed_store.clean();
+        let test_node_type = make_node_type(&mut boxed_store)?;
+        boxed_store.set_node_type(test_node_type.uuid)?;
+        let redis_result: Result<String, ::redis::RedisError> = store.connection.hget("nodes", boxed_store.get_node().uuid.hyphenated().to_string());
+        assert_eq!(redis_result.unwrap(), serde_json::to_string(boxed_store.get_node()).unwrap());
         Ok(())
     }
 
     #[test]
     fn can_get_job_types() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let job_types = store.get_job_types()?;
@@ -407,8 +403,8 @@ mod tests {
 
     #[test]
     fn can_get_job_schedule() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let schedule = store.get_job_schedule()?;
@@ -422,8 +418,8 @@ mod tests {
 
     #[test]
     fn can_claim_job_schedule() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
@@ -439,8 +435,8 @@ mod tests {
 
     #[test]
     fn can_enqueue_dequeue_jobs() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
@@ -452,44 +448,41 @@ mod tests {
         test_job.enqueued_at = dequeued_job.enqueued_at;
         test_job.started_at = dequeued_job.started_at;
         test_job.executing_node = dequeued_job.executing_node;
+        let all_jobs_waiting = store.get_all_jobs_in_progress()?;
+        assert_eq!(all_jobs_waiting, vec![test_job.clone()]);
         assert_eq!(dequeued_job, test_job);
         Ok(())
     }
 
     #[test]
     fn can_enqueue_dequeue_finish_jobs() -> Result<(), String> {
-        let mut store = RedisStore::connect()?;
-        clean(&mut store);
+        let mut store: StoreRef = Box::new(RedisStore::connect()?);
+        store.clean();
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
         make_job(&mut store, &test_job_type)?;
         let dequeued_job = store.dequeue_job()?;
         store.finish_job(dequeued_job.clone(), Some(Value::Bool(true)), Some(Value::Bool(false)))?;
-        let node_type_uuid = store.node.node_type_uuid.unwrap().hyphenated().to_string();
-        let redis_result: Result<String, ::redis::RedisError> = store.connection.hget(format!("jobs_finished_{}", node_type_uuid), dequeued_job.uuid.hyphenated().to_string());
-        if redis_result.is_err() {
-            return Err(format!("{:?}", redis_result.err().unwrap()));
-        }
-        let raw_job: Result<Job, serde_json::Error> = serde_json::from_str(&*redis_result.unwrap());
-        if raw_job.is_err() {
-            return Err(format!("{:?}", raw_job.err().unwrap()));
-        }
-        let job = raw_job.unwrap();
-        assert_ne!(job.ended_at, None);
-        assert_eq!(job.results, Some(Value::Bool(true)));
-        assert_eq!(job.errors, Some(Value::Bool(false)));
+        let all_jobs_finished = store.get_all_jobs_finished()?;
+        let mut theoretical_finished_job = dequeued_job.clone();
+        assert_eq!(all_jobs_finished.len(), 1);
+        theoretical_finished_job.ended_at = all_jobs_finished[0].ended_at;
+        theoretical_finished_job.results = Some(Value::Bool(true));
+        theoretical_finished_job.errors = Some(Value::Bool(false));
+        assert_eq!(all_jobs_finished, vec![theoretical_finished_job]);
         Ok(())
     }
 
     #[test]
     fn can_ping() -> Result<(), String> {
         let mut store = RedisStore::connect()?;
-        clean(&mut store);
-        let test_node_type = make_node_type(&mut store)?;
-        store.set_node_type(test_node_type.uuid)?;
-        store.ping()?;
-        let redis_result: Result<String, ::redis::RedisError> = store.connection.hget("nodes".to_string(), store.node.uuid.hyphenated().to_string());
+        let mut boxed_store: StoreRef = store.replicate()?;
+        boxed_store.clean();
+        let test_node_type = make_node_type(&mut boxed_store)?;
+        boxed_store.set_node_type(test_node_type.uuid)?;
+        boxed_store.ping()?;
+        let redis_result: Result<String, ::redis::RedisError> = store.connection.hget("nodes".to_string(), boxed_store.get_node().uuid.hyphenated().to_string());
         if redis_result.is_err() {
             return Err(format!("{:?}", redis_result.err().unwrap()));
         }
@@ -497,7 +490,7 @@ mod tests {
         if raw_node.is_err() {
             return Err(format!("{:?}", raw_node.err().unwrap()));
         }
-        assert_eq!(raw_node.unwrap(), store.node);
+        assert_eq!(raw_node.unwrap(), *boxed_store.get_node());
         Ok(())
     }
 
