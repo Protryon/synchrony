@@ -104,7 +104,6 @@ There are 2 ways to manually queue a job in Synchrony:
 * Build HTTP API.
 * Build out more documentation.
 * Create `sidekiq` and `http` executors.
-* Write unit tests.
 * Create client language implementations for direct communication.
 * Build out indirect Redis configuration client.
 * Create logging client to export logs from finished jobs in Redis.

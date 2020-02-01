@@ -26,6 +26,7 @@ pub trait Store {
     fn claim_job_scheduled(&mut self, schedule_item: &ScheduleItem) -> Result<Option<ScheduleItem>, String>;
     fn enqueue_job(&mut self, job: Job) -> Result<(), String>;
     fn dequeue_job(&mut self) -> Result<Job, String>;
+    fn get_all_jobs_waiting(&mut self) -> Result<Vec<Job>, String>;
     fn get_all_jobs_in_progress(&mut self) -> Result<Vec<Job>, String>;
     fn get_all_jobs_finished(&mut self) -> Result<Vec<Job>, String>;
     fn get_finished_job(&mut self, uuid: Uuid) -> Result<Job, String>;
@@ -127,12 +128,12 @@ pub mod tests {
         return Ok(job);
     }
 
-    pub fn make_schedule_item(store: &mut StoreRef, job_type_uuid: Uuid) -> Result<ScheduleItem, String> {
+    pub fn make_schedule_item(store: &mut StoreRef, job_type_uuid: Uuid, last_scheduled_by: Option<Uuid>, last_scheduled_at: Option<u64>) -> Result<ScheduleItem, String> {
         let mut test_schedule_item = ScheduleItem {
             uuid: Uuid::new_v4(),
-            interval: 30000,
-            last_scheduled_by: None,
-            last_scheduled_at: None,
+            interval: 1000,
+            last_scheduled_by: last_scheduled_by,
+            last_scheduled_at: last_scheduled_at,
             job_type_uuid: job_type_uuid,
             job_arguments: HashMap::new(),
         };

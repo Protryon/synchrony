@@ -245,6 +245,26 @@ impl Store for RedisStore {
         return Ok(());
     }
 
+    fn get_all_jobs_waiting(&mut self) -> Result<Vec<Job>, String> {
+        let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
+        let redis_result: Result<Vec<String>, ::redis::RedisError> = self.connection.lrange(format!("jobs_waiting_{}", node_type_uuid), 0, -1);
+        if redis_result.is_err() {
+            return Err(format!("{:?}", redis_result.err().unwrap()));
+        }
+        let raw_jobs = redis_result.unwrap();
+        let mut jobs: Vec<Job> = vec![];
+        for job in raw_jobs {
+            let raw_job: Result<Job, serde_json::Error> = serde_json::from_str(&*job);
+            if raw_job.is_err() {
+                return Err(format!("{:?}", raw_job.err().unwrap()));
+            }
+            let mut job = raw_job.unwrap();
+            job.job_type = Some(self.get_cached_job_type(job.job_type_uuid)?);
+            jobs.push(job);
+        }
+        return Ok(jobs);
+    }
+
     fn get_all_jobs_in_progress(&mut self) -> Result<Vec<Job>, String> {
         let node_type_uuid = self.node.node_type_uuid.unwrap().hyphenated().to_string();
         return self.get_all_jobs_in(format!("jobs_in_progress_{}", node_type_uuid));
@@ -410,7 +430,7 @@ mod tests {
         let schedule = store.get_job_schedule()?;
         assert_eq!(schedule, vec![]);
         let test_job_type = make_job_type(&mut store)?;
-        let test_schedule_item = make_schedule_item(&mut store, test_job_type.uuid)?;
+        let test_schedule_item = make_schedule_item(&mut store, test_job_type.uuid, None, None)?;
         let schedule_new = store.get_job_schedule()?;
         assert_eq!(schedule_new, vec![test_schedule_item]);
         Ok(())
@@ -423,7 +443,7 @@ mod tests {
         let test_node_type = make_node_type(&mut store)?;
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
-        let mut test_schedule_item = make_schedule_item(&mut store, test_job_type.uuid)?;
+        let mut test_schedule_item = make_schedule_item(&mut store, test_job_type.uuid, None, None)?;
         let claimed = store.claim_job_scheduled(&test_schedule_item)?;
         assert_ne!(claimed, Some(test_schedule_item.clone()));
         assert_ne!(claimed, None);
@@ -444,8 +464,11 @@ mod tests {
         assert_eq!(test_job.enqueued_at, None);
         assert_eq!(test_job.started_at, None);
         assert_eq!(test_job.executing_node, None);
+        let enqueued_jobs = store.get_all_jobs_waiting()?;
+        assert_eq!(enqueued_jobs.len(), 1);
         let dequeued_job = store.dequeue_job()?;
         test_job.enqueued_at = dequeued_job.enqueued_at;
+        assert_eq!(enqueued_jobs[0], test_job);
         test_job.started_at = dequeued_job.started_at;
         test_job.executing_node = dequeued_job.executing_node;
         let all_jobs_waiting = store.get_all_jobs_in_progress()?;
