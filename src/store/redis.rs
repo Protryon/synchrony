@@ -639,7 +639,9 @@ mod tests {
         if raw_node.is_err() {
             return Err(format!("{:?}", raw_node.err().unwrap()));
         }
-        assert_eq!(raw_node.unwrap(), *boxed_store.get_node());
+        let mut node = raw_node.unwrap();
+        node.node_type = boxed_store.get_node().node_type.clone();
+        assert_eq!(node, *boxed_store.get_node());
         Ok(())
     }
 
