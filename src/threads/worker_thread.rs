@@ -1,15 +1,13 @@
 
 use std::thread;
 use crate::StoreRef;
-use std::sync::{ Mutex, Arc };
 use log::*;
 use crate::exec::executors::*;
 use crate::exec::executor::*;
 use serde_json::Value;
 
-fn run_loop(store: &Arc<Mutex<StoreRef>>) {
-    let mut guarded_store = store.lock().unwrap();
-    let dequeued_item = guarded_store.dequeue_job();
+fn run_loop(store: &mut StoreRef) {
+    let dequeued_item = store.dequeue_job();
     if dequeued_item.is_err() {
         error!("Error getting job schedule from redis server: {}", dequeued_item.err().unwrap());
         return;
@@ -23,13 +21,13 @@ fn run_loop(store: &Arc<Mutex<StoreRef>>) {
         let result = context.result(&job, false);
         let finish_result = match result {
             Some(Err(e)) => {
-                guarded_store.finish_job(job, None, Some(e))
+                store.finish_job(job, None, Some(e))
             },
             Some(Ok(value)) => {
-                guarded_store.finish_job(job, value, None)
+                store.finish_job(job, value, None)
             },
             _ => {
-                guarded_store.finish_job(job, None, Some(Value::String("invalid executor context [async not supported]".to_string())))
+                store.finish_job(job, None, Some(Value::String("invalid executor context [async not supported]".to_string())))
             },
         };
         if finish_result.is_err() {
@@ -38,7 +36,7 @@ fn run_loop(store: &Arc<Mutex<StoreRef>>) {
         }
     } else {
         error!("Invalid executor type for job type '{}' / '{}' on job '{}': '{}'", job_type.name, job_type.uuid.hyphenated(), job.uuid.hyphenated(), job_type.executor);
-        let finish_result = guarded_store.finish_job(job, None, None);
+        let finish_result = store.finish_job(job, None, None);
         if finish_result.is_err() {
             error!("Error finishing bash task from redis server: {}", finish_result.err().unwrap());
             return;
@@ -46,10 +44,10 @@ fn run_loop(store: &Arc<Mutex<StoreRef>>) {
     }
 }
 
-pub fn start_thread(store: Arc<Mutex<StoreRef>>) {
+pub fn start_thread(mut store: StoreRef) {
     thread::spawn(move || {
         loop {
-            run_loop(&store);
+            run_loop(&mut store);
         }
     });
 }
@@ -69,10 +67,8 @@ mod tests {
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
         let mut test_job = make_job(&mut store, &test_job_type)?;
-        let store_ref = Arc::new(Mutex::new(store));
-        run_loop(&store_ref);
-        let mut store_guarded = store_ref.lock().unwrap();
-        let finished_jobs = store_guarded.get_all_jobs_finished()?;
+        run_loop(&mut store);
+        let finished_jobs = store.get_all_jobs_finished()?;
         assert_eq!(finished_jobs.len(), 1);
         test_job.enqueued_at = finished_jobs[0].enqueued_at;
         test_job.started_at = finished_jobs[0].started_at;

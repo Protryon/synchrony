@@ -15,13 +15,17 @@ pub trait Store {
     fn connect() -> Result<Self, String> where Self: std::marker::Sized;
     fn replicate(&self) -> Result<StoreRef, String>;
     fn get_node_types(&mut self) -> Result<Vec<NodeType>, String>;
+    fn get_node_type(&mut self, node_type_uuid: Uuid) -> Result<Option<NodeType>, String>;
     fn new_node_type(&mut self, node_type: &NodeType) -> Result<(), String>;
-    fn set_node_type(&mut self, node_type_uuid: Uuid) -> Result<(), String>;
+    fn set_node_type(&mut self, node_type_uuid: Uuid) -> Result<Option<()>, String>;
+    fn set_node_type_soft(&mut self, node_type_uuid: Uuid) -> Result<Option<()>, String>; // used in some api calls to pretend to be other node types. does not update store.
     fn get_job_types(&mut self) -> Result<Vec<JobType>, String>;
     // used when we encounter a job in our queue we don't know about
     fn get_job_type(&mut self, uuid: Uuid) -> Result<Option<JobType>, String>;
     fn new_job_type(&mut self, job_type: &JobType) -> Result<(), String>;
     fn get_job_schedule(&mut self) -> Result<Vec<ScheduleItem>, String>;
+    fn get_job_schedule_item(&mut self, uuid: Uuid) -> Result<Option<ScheduleItem>, String>;
+    fn delete_job_schedule_item(&mut self, uuid: Uuid) -> Result<(), String>;
     fn new_job_schedule_item(&mut self, schedule_item: &ScheduleItem) -> Result<(), String>;
     fn claim_job_scheduled(&mut self, schedule_item: &ScheduleItem) -> Result<Option<ScheduleItem>, String>;
     fn enqueue_job(&mut self, job: Job) -> Result<(), String>;
@@ -29,11 +33,13 @@ pub trait Store {
     fn get_all_jobs_waiting(&mut self) -> Result<Vec<Job>, String>;
     fn get_all_jobs_in_progress(&mut self) -> Result<Vec<Job>, String>;
     fn get_all_jobs_finished(&mut self) -> Result<Vec<Job>, String>;
-    fn get_finished_job(&mut self, uuid: Uuid) -> Result<Job, String>;
+    fn get_finished_job(&mut self, uuid: Uuid) -> Result<Option<Job>, String>;
     fn finish_job(&mut self, job: Job, results: Option<Value>, errors: Option<Value>) -> Result<(), String>;
     fn ping(&mut self) -> Result<(), String>;
     fn get_ping_interval_ms(&self) -> u32;
     fn get_node(&mut self) -> &mut Node;
+    fn get_nodes(&mut self) -> Result<Vec<Node>, String>;
+    fn get_other_node(&mut self, uuid: Uuid) -> Result<Option<Node>, String>;
     fn clean(&mut self);
 }
 
@@ -77,7 +83,10 @@ pub fn init_store() -> StoreRef {
         error!("Failed to update node_type for node in store: {}", updated_redis_result.err().unwrap());
         exit(1);
     }
-    store.get_node().node_type = Some(raw_node_type.clone());
+    if updated_redis_result.unwrap().is_none() {
+        error!("Node type UUID was not found: {}", raw_node_type.uuid);
+        exit(1);
+    }
     return store;
 }
 

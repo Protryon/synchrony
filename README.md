@@ -101,7 +101,7 @@ There are 2 ways to manually queue a job in Synchrony:
 2. Use a client implementation of the chosen store you are using, and add jobs directly to the relevant queue (i.e. `jobs_waiting_<node_type_uuid>`).
 
 ## Future Work
-* Build HTTP API.
+* Testing the HTTP API.
 * Build out more documentation.
 * Create `sidekiq` and `http` executors.
 * Create client language implementations for direct communication.
