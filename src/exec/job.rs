@@ -4,7 +4,7 @@ use uuid::Uuid;
 use serde_json::Value;
 use super::job_type::JobType;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Job {
     pub uuid: Uuid,
     pub job_type_uuid: Uuid,

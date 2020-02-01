@@ -12,11 +12,14 @@ pub trait Store {
     fn connect() -> Result<Self, String> where Self: std::marker::Sized;
     fn replicate(&self) -> Result<StoreRef, String>;
     fn get_node_types(&mut self) -> Result<Vec<NodeType>, String>;
+    fn new_node_type(&mut self, node_type: &NodeType) -> Result<(), String>;
     fn set_node_type(&mut self, node_type_uuid: Uuid) -> Result<(), String>;
     fn get_job_types(&mut self) -> Result<Vec<JobType>, String>;
     // used when we encounter a job in our queue we don't know about
-    fn get_new_job_type(&mut self, uuid: Uuid) -> Result<Option<JobType>, String>;
+    fn get_job_type(&mut self, uuid: Uuid) -> Result<Option<JobType>, String>;
+    fn new_job_type(&mut self, job_type: &JobType) -> Result<(), String>;
     fn get_job_schedule(&mut self) -> Result<Vec<ScheduleItem>, String>;
+    fn new_job_schedule_item(&mut self, schedule_item: &ScheduleItem) -> Result<(), String>;
     fn claim_job_scheduled(&mut self, schedule_item: &ScheduleItem) -> Result<Option<ScheduleItem>, String>;
     fn enqueue_job(&mut self, job: Job) -> Result<(), String>;
     fn dequeue_job(&mut self) -> Result<Job, String>;

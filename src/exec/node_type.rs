@@ -1,7 +1,7 @@
 use uuid::Uuid;
-use serde::Deserialize;
+use serde::{ Deserialize, Serialize };
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct NodeType {
     pub uuid: Uuid,
     pub name: String,

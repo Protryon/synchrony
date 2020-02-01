@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Clone, Debug)]
 pub struct ScheduleItem {
     pub uuid: Uuid,
     pub interval: u64,

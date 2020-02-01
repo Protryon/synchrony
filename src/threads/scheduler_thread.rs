@@ -27,7 +27,7 @@ pub fn start_thread(store: Arc<Mutex<StoreRef>>) {
                         Err(e) => { error!("Error claiming job schedule from redis server: {}", e); },
                         Ok(None) => {},
                         Ok(Some(_)) => {
-                            let job_type = guarded_store.get_new_job_type(schedule_item.job_type_uuid);
+                            let job_type = guarded_store.get_job_type(schedule_item.job_type_uuid);
                             if job_type.is_err() || job_type.as_ref().unwrap().is_none() {
                                 error!("Error getting job type from redis server: {}", job_type.err().unwrap());
                                 continue;

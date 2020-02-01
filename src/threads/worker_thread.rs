@@ -22,7 +22,7 @@ pub fn start_thread(store: Arc<Mutex<StoreRef>>) {
             if job_type.executor == "bash" {
                 let mut executor = bash::BashExecutor {};
                 let mut context = executor.execute(&job);
-                let result = context.result(&job, false, job_type.timeout);
+                let result = context.result(&job, false);
                 let finish_result = match result {
                     Some(Err(e)) => {
                         guarded_store.finish_job(job, None, Some(e))

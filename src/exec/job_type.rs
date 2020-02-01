@@ -1,9 +1,9 @@
 use uuid::Uuid;
 use serde_json::Value;
-use serde::Deserialize;
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct JobType {
     pub uuid: Uuid,
     pub name: String,
