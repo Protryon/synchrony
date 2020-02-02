@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use super::{ get_uuid_from_arg, redis_error_translate, option_translate };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexResponse {
     schedules: Vec<ScheduleItem>,
 }
@@ -106,4 +106,98 @@ pub fn delete(
         status: "ok".to_string(),
         uuid: uuid,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iron_test::request::{ post, get, delete };
+    use iron::{ Headers, headers::ContentType };
+    use crate::http::controllers::tests::*;
+    use crate::config;
+    use iron::status;
+    use crate::http::tests::initialize_tests;
+    use crate::store::{ self, StoreRef, tests::* };
+
+    #[test]
+    fn test_schedule_item_index() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let test_schedule = make_schedule_item(&mut store, test_job_type.uuid, None, None)?;
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/schedules", &*config::HTTP_BIND_ADDRESS), Headers::new(), &initialize_tests(store)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: IndexResponse = parse_body(response.body)?;
+        assert_eq!(body, IndexResponse {
+            schedules: vec![test_schedule],
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_schedule_item_get() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let test_schedule = make_schedule_item(&mut store, test_job_type.uuid, None, None)?;
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/schedules/{}", &*config::HTTP_BIND_ADDRESS, test_schedule.uuid.hyphenated()), Headers::new(), &initialize_tests(store)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: ScheduleItem = parse_body(response.body)?;
+        assert_eq!(body, test_schedule);
+        Ok(())
+    }
+
+    #[test]
+    fn test_schedule_item_post() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+
+        let test_schedule_item = PostBody {
+            interval: 1000,
+            job_type_uuid: test_job_type.uuid,
+            job_arguments: HashMap::new(),
+        };
+        let test_schedule_item_serialized = serde_json::to_string(&test_schedule_item).unwrap();
+
+        let mut headers = Headers::new();
+        headers.set::<ContentType>(ContentType::json());
+        let response = iron_error_translate(post(&*format!("http://{}/api/schedules", &*config::HTTP_BIND_ADDRESS), headers, &*test_schedule_item_serialized, &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: PostResponse = parse_body(response.body)?;
+        let new_job = store.get_job_schedule_item(body.uuid)?.unwrap();
+        assert_eq!(new_job, ScheduleItem {
+            uuid: body.uuid,
+            interval: test_schedule_item.interval,
+            job_type_uuid: test_schedule_item.job_type_uuid,
+            job_arguments: test_schedule_item.job_arguments,
+            last_scheduled_at: None,
+            last_scheduled_by: None,
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_schedule_item_delete() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let test_schedule = make_schedule_item(&mut store, test_job_type.uuid, None, None)?;
+
+        let response = iron_error_translate(delete(&*format!("http://{}/api/schedules/{}", &*config::HTTP_BIND_ADDRESS, test_schedule.uuid.hyphenated()), Headers::new(), &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        assert_eq!(store.get_job_schedule_item(test_schedule.uuid)?, None);
+        Ok(())
+    }
+
 }

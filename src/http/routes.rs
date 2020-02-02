@@ -18,7 +18,7 @@ pub fn add_routes(router: &mut Router) {
     router.get("/api/jobs/:node_type_uuid/in_progress", serialize_wrap(api::jobs::index_in_progress), "jobs#index_in_progress");
     router.get("/api/jobs/:node_type_uuid/finished", serialize_wrap(api::jobs::index_finished), "jobs#index_finished");
     router.get("/api/jobs/:node_type_uuid/:uuid", serialize_wrap(api::jobs::get), "jobs#get"); // gets only finished jobs, but includes all results/errors, not a boolean presence summary
-    router.post("/api/jobs/:node_type_uuid", json_wrap(api::jobs::post), "jobs#post");
+    router.post("/api/jobs", json_wrap(api::jobs::post), "jobs#post");
 
     router.get("/api/schedules", serialize_wrap(api::schedule::index), "schedule#index");
     router.get("/api/schedules/:uuid", serialize_wrap(api::schedule::get), "schedule#get");

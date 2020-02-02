@@ -7,7 +7,7 @@ use crate::http::helpers::control::status_error;
 use log::*;
 use super::{ get_uuid_from_arg, redis_error_translate, option_translate };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexResponse {
     node_types: Vec<NodeType>,
 }
@@ -64,4 +64,70 @@ pub fn post(
     Ok(PostResponse {
         status: "ok".to_string(),
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iron_test::request::{ post, get };
+    use iron::{ Headers, headers::ContentType };
+    use crate::http::controllers::tests::*;
+    use crate::config;
+    use iron::status;
+    use crate::http::tests::initialize_tests;
+    use crate::store::{ self, StoreRef, tests::* };
+    use uuid::Uuid;
+
+    #[test]
+    fn test_node_types_index() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/node_types", &*config::HTTP_BIND_ADDRESS), Headers::new(), &initialize_tests(store)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: IndexResponse = parse_body(response.body)?;
+        assert_eq!(body, IndexResponse {
+            node_types: vec![test_node_type],
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_types_get() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let store_node = store.get_node().clone();
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/node_types/{}", &*config::HTTP_BIND_ADDRESS, store_node.node_type_uuid.unwrap().hyphenated()), Headers::new(), &initialize_tests(store)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: NodeType = parse_body(response.body)?;
+        assert_eq!(body, store_node.node_type.unwrap());
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_types_post() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = NodeType {
+            name: "test_node_type".to_string(),
+            uuid: Uuid::new_v4(),
+            thread_count: 1,
+        };
+        let node_type_serialized = serde_json::to_string(&test_node_type).unwrap();
+
+        let mut headers = Headers::new();
+        headers.set::<ContentType>(ContentType::json());
+        let response = iron_error_translate(post(&*format!("http://{}/api/node_types/{}", &*config::HTTP_BIND_ADDRESS, test_node_type.uuid.hyphenated()), headers, &*node_type_serialized, &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        store.set_node_type(test_node_type.uuid)?;
+        assert_eq!(store.get_node().node_type.as_ref().unwrap().clone(), test_node_type);
+        Ok(())
+    }
+
 }

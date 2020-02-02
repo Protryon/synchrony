@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use super::{ get_uuid_from_arg, redis_error_translate, option_translate };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexResponse {
     jobs: Vec<Job>,
 }
@@ -27,7 +27,7 @@ pub fn index_queued(
         .unwrap()
         .lock()
         .unwrap();
-    let current_node_type_uuid = store.get_node().uuid;
+    let current_node_type_uuid = store.get_node().node_type_uuid.unwrap();
     let node_type_uuid = get_uuid_from_arg(req, "node_type_uuid")?;
     option_translate(redis_error_translate(store.set_node_type_soft(node_type_uuid))?)?;
     let jobs = redis_error_translate(store.get_all_jobs_waiting());
@@ -49,7 +49,7 @@ pub fn index_in_progress(
         .unwrap()
         .lock()
         .unwrap();
-    let current_node_type_uuid = store.get_node().uuid;
+    let current_node_type_uuid = store.get_node().node_type_uuid.unwrap();
     let node_type_uuid = get_uuid_from_arg(req, "node_type_uuid")?;
     option_translate(redis_error_translate(store.set_node_type_soft(node_type_uuid))?)?;
     let jobs = redis_error_translate(store.get_all_jobs_in_progress());
@@ -71,7 +71,7 @@ pub fn index_finished(
         .unwrap()
         .lock()
         .unwrap();
-    let current_node_type_uuid = store.get_node().uuid;
+    let current_node_type_uuid = store.get_node().node_type_uuid.unwrap();
     let node_type_uuid = get_uuid_from_arg(req, "node_type_uuid")?;
     option_translate(redis_error_translate(store.set_node_type_soft(node_type_uuid))?)?;
     let jobs = redis_error_translate(store.get_all_jobs_finished());
@@ -109,7 +109,7 @@ pub fn get(
         .unwrap()
         .lock()
         .unwrap();
-    let current_node_type_uuid = store.get_node().uuid;
+    let current_node_type_uuid = store.get_node().node_type_uuid.unwrap();
     option_translate(redis_error_translate(store.set_node_type_soft(node_type_uuid))?)?;
     let job = redis_error_translate(store.get_finished_job(job_uuid));
     option_translate(redis_error_translate(store.set_node_type_soft(current_node_type_uuid))?)?;
@@ -159,4 +159,143 @@ pub fn post(
         status: "ok".to_string(),
         uuid: job_uuid,
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iron_test::request::{ post, get };
+    use iron::{ Headers, headers::ContentType };
+    use crate::http::controllers::tests::*;
+    use crate::config;
+    use iron::status;
+    use crate::http::tests::initialize_tests;
+    use crate::store::{ self, StoreRef, tests::* };
+
+    #[test]
+    fn test_jobs_index_queued() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let mut test_job = make_job(&mut store, &test_job_type)?;
+        let response = iron_error_translate(get(&*format!("http://{}/api/jobs/{}/queued", &*config::HTTP_BIND_ADDRESS, test_node_type.uuid.hyphenated()), Headers::new(), &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: IndexResponse = parse_body(response.body)?;
+        test_job.job_type = None;
+        assert_eq!(body.jobs.len(), 1);
+        test_job.enqueued_at = body.jobs[0].enqueued_at;
+        assert_eq!(body, IndexResponse {
+            jobs: vec![test_job],
+        });
+        assert_eq!(store.get_node().node_type_uuid.unwrap(), test_node_type.uuid);
+        Ok(())
+    }
+
+    #[test]
+    fn test_jobs_index_in_progress() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let mut test_job = make_job(&mut store, &test_job_type)?;
+        store.dequeue_job()?;
+        let response = iron_error_translate(get(&*format!("http://{}/api/jobs/{}/in_progress", &*config::HTTP_BIND_ADDRESS, test_node_type.uuid.hyphenated()), Headers::new(), &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: IndexResponse = parse_body(response.body)?;
+        test_job.job_type = None;
+        assert_eq!(body.jobs.len(), 1);
+        test_job.enqueued_at = body.jobs[0].enqueued_at;
+        test_job.started_at = body.jobs[0].started_at;
+        test_job.executing_node = body.jobs[0].executing_node;
+        assert_eq!(body, IndexResponse {
+            jobs: vec![test_job],
+        });
+        assert_eq!(store.get_node().node_type_uuid.unwrap(), test_node_type.uuid);
+        Ok(())
+    }
+
+    #[test]
+    fn test_jobs_index_finished() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let mut test_job = make_job(&mut store, &test_job_type)?;
+        store.dequeue_job()?;
+        store.finish_job(test_job.clone(), Some(Value::String("output".to_string())), Some(Value::String("errors".to_string())))?;
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/jobs/{}/finished", &*config::HTTP_BIND_ADDRESS, test_node_type.uuid.hyphenated()), Headers::new(), &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: IndexResponse = parse_body(response.body)?;
+        test_job.job_type = None;
+        assert_eq!(body.jobs.len(), 1);
+        test_job.enqueued_at = body.jobs[0].enqueued_at;
+        test_job.started_at = body.jobs[0].started_at;
+        test_job.ended_at = body.jobs[0].ended_at;
+        test_job.executing_node = body.jobs[0].executing_node;
+        test_job.results = Some(Value::Bool(true));
+        test_job.errors = Some(Value::Bool(true));
+        assert_eq!(body, IndexResponse {
+            jobs: vec![test_job],
+        });
+        assert_eq!(store.get_node().node_type_uuid.unwrap(), test_node_type.uuid);
+        Ok(())
+    }
+
+    #[test]
+    fn test_jobs_get() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+        let mut test_job = make_job(&mut store, &test_job_type)?;
+        store.dequeue_job()?;
+        store.finish_job(test_job.clone(), Some(Value::String("output".to_string())), Some(Value::String("errors".to_string())))?;
+
+        let response = iron_error_translate(get(&*format!("http://{}/api/jobs/{}/{}", &*config::HTTP_BIND_ADDRESS, test_node_type.uuid.hyphenated(), test_job.uuid.hyphenated()), Headers::new(), &initialize_tests(store)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: Job = parse_body(response.body)?;
+        test_job.job_type = None;
+        test_job.enqueued_at = body.enqueued_at;
+        test_job.started_at = body.started_at;
+        test_job.ended_at = body.ended_at;
+        test_job.executing_node = body.executing_node;
+        test_job.results = Some(Value::String("output".to_string()));
+        test_job.errors = Some(Value::String("errors".to_string()));
+        assert_eq!(body, test_job);
+        Ok(())
+    }
+
+    #[test]
+    fn test_jobs_post() -> Result<(), String> {
+        let mut store: StoreRef = store::init_store_untyped();
+        store.clean();
+        let test_node_type = make_node_type(&mut store)?;
+        store.set_node_type(test_node_type.uuid)?;
+        let test_job_type = make_job_type(&mut store)?;
+
+        let test_job = PostBody {
+            job_type_uuid: test_job_type.uuid,
+            arguments: HashMap::new(),
+        };
+        let test_job_serialized = serde_json::to_string(&test_job).unwrap();
+
+        let mut headers = Headers::new();
+        headers.set::<ContentType>(ContentType::json());
+        let response = iron_error_translate(post(&*format!("http://{}/api/jobs", &*config::HTTP_BIND_ADDRESS), headers, &*test_job_serialized, &initialize_tests(store.replicate()?)))?;
+        assert_eq!(response.status, Some(status::Ok));
+        let body: PostResponse = parse_body(response.body)?;
+        let new_job = store.dequeue_job()?;
+        assert_eq!(new_job.uuid, body.uuid);
+        assert_eq!(new_job.job_type_uuid, test_job_type.uuid);
+        assert_eq!(new_job.arguments, test_job.arguments);
+        Ok(())
+    }
+
 }

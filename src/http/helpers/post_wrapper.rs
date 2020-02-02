@@ -7,11 +7,13 @@ use log::*;
 use serde::{de, Serialize};
 use std::fmt::Debug;
 
-pub struct WrappedHandler<T: de::DeserializeOwned + 'static, K: Serialize + 'static> {
+pub struct WrappedHandler<T: de::DeserializeOwned + 'static + Sync + Send, K: Serialize + 'static> {
     handler: fn(&mut Request, &T) -> Result<K, IronResult<Response>>,
+    allow_empty: bool,
+    empty_default: Option<T>,
 }
 
-impl<T: de::DeserializeOwned + Clone + Debug + 'static, K: Serialize + 'static> Handler
+impl<T: de::DeserializeOwned + Clone + Debug + Sync + Send + 'static, K: Serialize + 'static> Handler
     for WrappedHandler<T, K>
 {
     fn handle(&self, req: &mut Request) -> IronResult<Response> {
@@ -21,10 +23,17 @@ impl<T: de::DeserializeOwned + Clone + Debug + 'static, K: Serialize + 'static> 
             return status_error(status::BadRequest);
         }
         let optionally_body = maybe_body.unwrap();
-        if optionally_body.is_none() {
-            return status_error(status::BadRequest);
-        }
-        let body = optionally_body.unwrap();
+        let body = if self.allow_empty {
+            match optionally_body {
+                Some(s) => s,
+                None => self.empty_default.clone().unwrap(),
+            }
+        } else {
+            if optionally_body.is_none() {
+                return status_error(status::BadRequest);
+            }
+            optionally_body.unwrap()
+        };
         let response = (self.handler)(req, &body);
         match response {
             Ok(data) => Ok(Response::with((
@@ -39,13 +48,13 @@ impl<T: de::DeserializeOwned + Clone + Debug + 'static, K: Serialize + 'static> 
 
 type HandleFunc<T, K> = fn(&mut Request, &T) -> Result<K, IronResult<Response>>;
 
-pub fn json_wrap<T: de::DeserializeOwned + 'static, K: Serialize + 'static>(
+pub fn json_wrap<T: de::DeserializeOwned + 'static + Sync + Send, K: Serialize + 'static>(
     handler: HandleFunc<T, K>,
 ) -> WrappedHandler<T, K> {
-    WrappedHandler { handler }
+    WrappedHandler { handler, allow_empty: false, empty_default: None }
 }
 
 // NoDeserialize
 pub fn serialize_wrap<K: Serialize + 'static>(handler: HandleFunc<(), K>) -> WrappedHandler<(), K> {
-    WrappedHandler { handler }
+    WrappedHandler { handler, allow_empty: true, empty_default: Some(()) }
 }

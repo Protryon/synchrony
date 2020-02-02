@@ -15,7 +15,7 @@ mod tests {
     use super::*;
     use iron_test::request::get;
     use iron::Headers;
-    use super::super::tests::stringify_body;
+    use crate::http::controllers::tests::stringify_body;
     use crate::config;
 
     const ROUTE: &str = "/health";
