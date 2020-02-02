@@ -89,7 +89,11 @@ Synchrony is built around the idea of end-use language agnosticism. Executors we
 
 ### Scheduling Jobs
 
-Work in Progress
+Synchrony has the ability to automatically schedule jobs in a cron-like fashion.
+
+Scheduled jobs can be easily managed directly through the store, or through the HTTP API. The interval (in milliseconds) specifies how often a job should run.
+
+Note that there is no notion of catching up jobs if workers have been offline for some time, so do not rely on execution counts based on time.
 
 ### Running Jobs
 
@@ -97,12 +101,311 @@ Work in progress.
 
 There are 2 ways to manually queue a job in Synchrony:
 1. Use the HTTP API provided by all Synchrony nodes to create a new job.
-    Not yet implemented.
 2. Use a client implementation of the chosen store you are using, and add jobs directly to the relevant queue (i.e. `jobs_waiting_<node_type_uuid>`).
 
+### Data formats
+
+The following are standard formats used to represent various data types with Synchrony.
+
+#### Job Type
+```
+{
+    "uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "name": "test_job_type",
+    "executor": "bash",
+    "metadata": { command: "echo 'test'" },
+    "unique": false,
+    "node_type": "default",
+    "timeout": null
+}
+```
+
+* `uuid`: Universally Unique ID
+* `name`: Human readable name for convenience
+* `executor`: String enum value for current executor
+* `metadata`: Arguments to be used by the specified executor
+* `unique`: If true, only one job can execute across the network at one time
+* `node_type`: The type of nodes this job type can execute on
+* `timeout`: `null` or a time in milliseconds specifying how long the executor should wait before killing the job
+
+#### Job
+```
+{
+    "uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "job_type_uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "arguments": {},
+    "executing_node": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "enqueued_at": 1580651664039,
+    "started_at": 1580651664039,
+    "ended_at": 1580651664039,
+    "results": { stdout: "test\n", stderr: "", exit_code: 0 },
+    "errors": null
+}
+```
+
+* `uuid`: Universally Unique ID
+* `job_type_uuid`: UUID of job type accompying the job
+* `arguments`: Arguments to be used by the specified executor within the job type
+* `executing_node`: If already executing or finished, the node's UUID that is or has executed the job
+* `enqueued_at`: At what time the job was created, milliseconds UNIX epoch
+* `started_at`: At what time the job was started by a node, milliseconds UNIX epoch
+* `ended_at`: At what time the job was finished by a node, milliseconds UNIX epoch
+* `results`: An executor defined field upon job completion, or `null` if none provided
+* `errors`: An executor defined field upon job completion, or `null` if none provided
+
+#### Node Type
+```
+{
+    "uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "name": "default",
+    "thread_count": 16
+}
+```
+
+* `uuid`: Universally Unique ID
+* `name`: Human readable name for convenience
+* `thread_count`: An integer specifying how many concurrent jobs nodes of this type can process
+
+#### Node
+```
+{
+    "uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "node_type_uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "last_ping": 1580651664039
+}
+```
+
+* `uuid`: Universally Unique ID
+* `node_type_uuid`: UUID of node type accompying the node, decided by the node on startup
+* `last_ping`: At what time the node last sent a ping to the store (by default every 5 seconds), milliseconds UNIX epoch
+
+#### Schedule Item
+```
+{
+    "uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "interval": 60000,
+    "last_scheduled_by": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "last_scheduled_at": 1580651664039,
+    "job_type_uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "job_arguments": {}
+}
+```
+
+* `uuid`: Universally Unique ID
+* `interval`: Minimum number of milliseconds between job runs
+* `last_scheduled_by`: `null` if not previously run, or the uuid of the node that last scheduled (not run) this job
+* `last_scheduled_at`: `null` if not previously run, or the time in milliseconds UNIX epoch when the job was last scheduled (not run)
+* `job_type_uuid`: UUID of job type accompying the job
+* `job_arguments`: Arguments to be passed to the job upon being enqueued
+
+#### 
+
+### HTTP API
+* All requests are authenticated with an `Authorization: Bearer <API_KEY>` header, as specified via environment variable or defaulted to `dev_key`.
+* All post requests must have `Content-Type: application/json`.
+* All responses other than `GET /health` are JSON responses. `200 OK` status indicates success, anything else is failure.
+
+#### GET /health
+A simple endpoint that returns a `200 OK` response with payload of `ok`.
+
+#### GET /api/job_types
+Gets a list of all defined job types.
+
+Response format:
+```
+{
+    job_types: [
+        <Job Type>
+    ]
+}
+```
+
+#### GET /api/job_types/:uuid
+Gets a single job type.
+
+Response format:
+```
+<Job Type>
+```
+
+#### POST /api/job_types
+Creates a new job type.
+
+Request format:
+```
+<Job Type without UUID>
+```
+
+Response format:
+```
+{
+    status: "ok",
+    uuid: "b30833c1-83b0-4dda-a439-97e3c97bbaa5"
+}
+```
+
+#### GET /api/jobs/:node_type_uuid/queued
+Gets all enqueued jobs for a given node type.
+
+Response format:
+```
+{
+    jobs: [
+        <Job>
+    ]
+}
+```
+
+#### GET /api/jobs/:node_type_uuid/in_progress
+Gets all currently executing jobs for a given node type.
+
+Response format:
+Same as `GET /api/jobs/:node_type_uuid/queued` above.
+
+#### GET /api/jobs/:node_type_uuid/finished
+Gets all finished jobs for a given node type.
+
+Response format:
+Same as `GET /api/jobs/:node_type_uuid/queued` above.
+
+Note that `results` and `errors` are replaced with `true`/`false`. To get the full results or errors, get the specific job via `GET /api/jobs/:node_type_uuid/:uuid` below.
+
+#### GET /api/jobs/:node_type_uuid/:uuid
+Gets a finished job's extended data, including full results/errors.
+
+Response format:
+```
+<Job>
+```
+
+#### POST /api/jobs
+Enqueues a new job to be executed. Note that the node that receives this request is not necessarily the node that will execute it.
+
+Request format:
+```
+{
+    "job_type_uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "arguments": {}
+}
+```
+
+Response format:
+```
+{
+    status: "ok",
+    uuid: "b30833c1-83b0-4dda-a439-97e3c97bbaa5"
+}
+```
+
+#### GET /api/node_types
+Gets a list of all defined node types.
+
+Response format:
+```
+{
+    node_types: [
+        <Node Type>
+    ]
+}
+```
+
+#### GET /api/node_types/:uuid
+Gets a single node type.
+
+Response format:
+```
+<Node Type>
+```
+
+#### POST /api/node_types/:uuid
+Creates a new node type, or updates an existing one. Note that the UUID must remain unchanged.
+
+Request format:
+```
+<Node Type>
+```
+
+Response format:
+```
+{
+    "status": "ok"
+}
+```
+
+#### GET /api/nodes
+Gets a list of all nodes that have been active in the last 20 seconds.
+
+Response format:
+```
+{
+    nodes: [
+        <Node>
+    ]
+}
+```
+
+#### GET /api/nodes/:uuid
+Gets information on a specific node.
+
+Response format:
+```
+<Node>
+```
+
+#### GET /api/schedules
+Gets a list of all schedule items.
+
+Response format:
+```
+{
+    schedules: [
+        <Schedule Item>
+    ]
+}
+```
+
+#### GET /api/schedules/:uuid
+Gets a single schedule item.
+
+Response format:
+```
+<Schedule Item>
+```
+
+#### POST /api/schedules
+Creates a new schedule item.
+
+Request format:
+```
+{
+    "interval": 60000,
+    "job_type_uuid": "b30833c1-83b0-4dda-a439-97e3c97bbaa5",
+    "job_arguments": {}
+}
+```
+
+Response format:
+```
+{
+    status: "ok",
+    uuid: "b30833c1-83b0-4dda-a439-97e3c97bbaa5"
+}
+```
+
+#### DELETE /api/schedules/:uuid
+Deletes a schedule item permanently.
+
+Response format:
+```
+{
+    status: "ok",
+    uuid: "b30833c1-83b0-4dda-a439-97e3c97bbaa5"
+}
+```
+
 ## Future Work
-* Build out documentation on scheduling jobs, HTTP API.
 * Create `sidekiq` and `http` executors.
+* Create a watchdog thread that looks for jobs claimed by dead nodes and requeues them depending on job configuration.
 * Create client language implementations for direct communication.
-* Build out indirect Redis configuration client.
+* Build out independent frontend that interfaces with the HTTP API.
 * Create logging client to export logs from finished jobs in Redis.

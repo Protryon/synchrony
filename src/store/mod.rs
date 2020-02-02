@@ -140,7 +140,7 @@ pub mod tests {
     pub fn make_schedule_item(store: &mut StoreRef, job_type_uuid: Uuid, last_scheduled_by: Option<Uuid>, last_scheduled_at: Option<u64>) -> Result<ScheduleItem, String> {
         let mut test_schedule_item = ScheduleItem {
             uuid: Uuid::new_v4(),
-            interval: 1000,
+            interval: 500,
             last_scheduled_by: last_scheduled_by,
             last_scheduled_at: last_scheduled_at,
             job_type_uuid: job_type_uuid,

@@ -14,7 +14,8 @@ fn run_loop(store: &mut StoreRef) {
     }
     let eval_time = epoch();
     for schedule_item in job_schedule.unwrap() {
-        if schedule_item.last_scheduled_at.is_none() || eval_time - schedule_item.last_scheduled_at.unwrap() >= schedule_item.interval {
+        let current_chunk = eval_time / schedule_item.interval;
+        if schedule_item.last_scheduled_at.is_none() || current_chunk > (schedule_item.last_scheduled_at.unwrap() / schedule_item.interval) {
             let claim_result = store.claim_job_scheduled(&schedule_item);
             match claim_result {
                 Err(e) => { error!("Error claiming job schedule from redis server: {}", e); },
@@ -104,8 +105,8 @@ mod tests {
         store.set_node_type(test_node_type.uuid)?;
         let test_job_type = make_job_type(&mut store)?;
         let node_uuid = store.get_node().uuid;
-        // assumption: the following 3 lines execute in < 1 sec (the default interval for make_schedule_item)
-        make_schedule_item(&mut store, test_job_type.uuid, Some(node_uuid), Some(epoch()))?;
+        // assumption: the following 3 lines execute in < 500 ms (the default interval for make_schedule_item)
+        make_schedule_item(&mut store, test_job_type.uuid, Some(node_uuid), Some(epoch() + 100))?;
         run_loop(&mut store);
         let mut queued_jobs = store.get_all_jobs_waiting()?;
         assert_eq!(queued_jobs.len(), 0);
