@@ -82,9 +82,17 @@ Synchrony is built around the idea of end-use language agnosticism. Executors we
 * `bash`: Bash takes two parameters in `job_type`'s metadata, concatenates with the same two parameters from a given `job`'s arguments:
     1. `command`: Either a JSON array or a string representing the command. Required for `job_type`s, not for `job`s.
     2. `environment`: A JSON map specifying the environment variables to set when running the job. Never required.
+* `sidekiq`: Sidekiq takes up to 6 parameters:
+    * `job_type`'s metadata:
+        1. `rails_dir`: Path to rails primary application directory containing a Sidekiq installation.
+        2. `sidekiq_worker`: Ruby class name of the specified worker (i.e. `TestWorker`).
+        3. `ruby_executable`: Defaults to `ruby`. May be necessary to control in some version controlled environments.
+        4. `environment`: equivalent to `bash`'s `environment`.
+    * `job`'s arguments:
+        5. `sidekiq_arguments`: An optional JSON blob representing the arguments to pass into the Sidekiq worker.
+        6. `environment`: equivalent to `bash`'s `environment`.
 * Custom Executors
-    Synchrony only has builtin support for `bash` execution at the moment, which allows a wide range of integrations with other systems. Other, more specialized executors can be created by contributing to this project. Planned future builtin executors:
-    * `sidekiq`
+    Synchrony only has builtin support for the above executors at the moment, which allows a wide range of integrations with other systems. Other, more specialized executors can be created by contributing to this project. Planned future builtin executors:
     * `http`
 
 ### Scheduling Jobs
