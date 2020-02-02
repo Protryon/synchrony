@@ -404,8 +404,8 @@ Response format:
 ```
 
 ## Future Work
-* Create `sidekiq` and `http` executors.
 * Create a watchdog thread that looks for jobs claimed by dead nodes and requeues them depending on job configuration.
-* Create client language implementations for direct communication.
 * Build out independent frontend that interfaces with the HTTP API.
 * Create logging client to export logs from finished jobs in Redis.
+* Create `http` executor.
+* Create client language implementations for direct communication.

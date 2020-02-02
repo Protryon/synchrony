@@ -12,9 +12,9 @@ pub struct BashExecutor {
 }
 
 pub struct BashExecutorContext {
-    internal_failure: bool,
-    handle: Option<Child>,
-    timeout: Option<u64>,
+    pub internal_failure: bool,
+    pub handle: Option<Child>,
+    pub timeout: Option<u64>,
 }
 
 impl ExecutionContext for BashExecutorContext {
