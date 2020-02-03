@@ -9,7 +9,7 @@ Synchrony is a distributed job management engine inspired in part by Sidekiq.
 
 ## Status
 
-Synchrony is in an early beta stage. It is not ready for production environments, pending extensive testing.
+Synchrony is in a beta stage.
 
 ## Building
 
